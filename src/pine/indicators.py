@@ -108,7 +108,9 @@ class MACD:
             signal: Signal line EMA period (default: 9)
         """
         if isinstance(source, Series):
-            self.source = source.to_array()
+            # Series data is stored with most recent first (index 0 = newest)
+            # We need to reverse it for chronological calculation
+            self.source = source.to_array()[::-1]  # Now oldest first
         elif isinstance(source, pd.Series):
             self.source = source.values
         else:
@@ -126,18 +128,28 @@ class MACD:
 
     def _calculate(self) -> None:
         """Calculate MACD components."""
-        # Calculate EMAs
+        # Calculate EMAs (source is in chronological order: oldest first)
         fast_ema = ema(self.source, self.fast)
         slow_ema = ema(self.source, self.slow)
 
         # MACD line = fast EMA - slow EMA
-        self._macd_line = fast_ema - slow_ema
+        macd_line = fast_ema - slow_ema
 
         # Signal line = EMA of MACD line
-        self._signal_line = ema(self._macd_line, self.signal)
+        signal_line = ema(macd_line, self.signal)
 
         # Histogram = MACD line - Signal line
-        self._histogram = self._macd_line - self._signal_line
+        histogram = macd_line - signal_line
+
+        # Reverse back so index 0 = most recent (matching Series convention)
+        self._macd_line_data = macd_line[::-1]
+        self._signal_line_data = signal_line[::-1]
+        self._histogram_data = histogram[::-1]
+
+        # Cache Series objects so set_index() works correctly
+        self._macd_line_series = Series(self._macd_line_data, name="MACD")
+        self._signal_line_series = Series(self._signal_line_data, name="Signal")
+        self._histogram_series = Series(self._histogram_data, name="Histogram")
 
     def calculate(self) -> MACDResult:
         """
@@ -147,25 +159,25 @@ class MACD:
             MACDResult with macd_line, signal_line, and histogram as Series
         """
         return MACDResult(
-            macd_line=Series(self._macd_line, name="MACD"),
-            signal_line=Series(self._signal_line, name="Signal"),
-            histogram=Series(self._histogram, name="Histogram")
+            macd_line=self._macd_line_series,
+            signal_line=self._signal_line_series,
+            histogram=self._histogram_series
         )
 
     @property
     def macd_line(self) -> Series:
         """Get MACD line as Series."""
-        return Series(self._macd_line, name="MACD")
+        return self._macd_line_series
 
     @property
     def signal_line(self) -> Series:
         """Get signal line as Series."""
-        return Series(self._signal_line, name="Signal")
+        return self._signal_line_series
 
     @property
     def histogram(self) -> Series:
         """Get histogram as Series."""
-        return Series(self._histogram, name="Histogram")
+        return self._histogram_series
 
 
 class ATR:
@@ -203,22 +215,24 @@ class ATR:
             period: ATR period (default: 14)
         """
         # Convert to numpy arrays
+        # Series data is stored with most recent first (index 0 = newest)
+        # We need to reverse it for chronological calculation
         if isinstance(high, Series):
-            self.high = high.to_array()
+            self.high = high.to_array()[::-1]  # Now oldest first
         elif isinstance(high, pd.Series):
             self.high = high.values
         else:
             self.high = np.array(high, dtype=np.float64)
 
         if isinstance(low, Series):
-            self.low = low.to_array()
+            self.low = low.to_array()[::-1]  # Now oldest first
         elif isinstance(low, pd.Series):
             self.low = low.values
         else:
             self.low = np.array(low, dtype=np.float64)
 
         if isinstance(close, Series):
-            self.close = close.to_array()
+            self.close = close.to_array()[::-1]  # Now oldest first
         elif isinstance(close, pd.Series):
             self.close = close.values
         else:
@@ -232,7 +246,7 @@ class ATR:
 
     def _calculate(self) -> None:
         """Calculate ATR values."""
-        # Calculate True Range
+        # Calculate True Range (data is in chronological order: oldest first)
         tr = np.zeros(len(self.high))
 
         # First TR is just high - low
@@ -247,12 +261,18 @@ class ATR:
 
         # ATR is EMA of True Range (Wilder's smoothing = EMA with alpha = 1/period)
         # Using RMA (Running Moving Average) which is Wilder's original method
-        self._atr = np.zeros_like(tr)
-        self._atr[0] = tr[0]
+        atr = np.zeros_like(tr)
+        atr[0] = tr[0]
 
         alpha = 1 / self.period
         for i in range(1, len(tr)):
-            self._atr[i] = alpha * tr[i] + (1 - alpha) * self._atr[i - 1]
+            atr[i] = alpha * tr[i] + (1 - alpha) * atr[i - 1]
+
+        # Reverse back so index 0 = most recent (matching Series convention)
+        self._atr_data = atr[::-1]
+
+        # Cache Series object so set_index() works correctly
+        self._atr_series = Series(self._atr_data, name="ATR")
 
     def calculate(self) -> Series:
         """
@@ -261,12 +281,12 @@ class ATR:
         Returns:
             Series containing ATR values
         """
-        return Series(self._atr, name="ATR")
+        return self._atr_series
 
     @property
     def values(self) -> Series:
         """Get ATR values as Series."""
-        return Series(self._atr, name="ATR")
+        return self._atr_series
 
 
 def crossover(series_a: Union[Series, np.ndarray],

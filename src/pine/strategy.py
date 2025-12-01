@@ -421,13 +421,20 @@ class StrategyBase:
         Process a single bar.
 
         Called by backtesting engine.
-
-        Args:
-            bar: Current bar
-            bar_index: Bar index
         """
         self.current_bar = bar
         self.current_bar_index = bar_index
+
+        # --- NEW: SYNCHRONIZE INDICATOR SERIES INDICES ---
+        series_index = len(self.data.tf_1h.data) - 1 - bar_index
+        for indicator in self.indicators.values():
+            if hasattr(indicator, 'macd_line'): # Handle MACDResult
+                indicator.macd_line.set_index(series_index)
+                indicator.signal_line.set_index(series_index)
+                indicator.histogram.set_index(series_index)
+            elif hasattr(indicator, 'values'): # Handle ATR
+                indicator.values.set_index(series_index)
+        # -----------------------------------------------
 
         # Update position with current price
         if self.has_position:

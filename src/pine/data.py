@@ -284,6 +284,42 @@ class MultiTimeframeData:
         for name, data in timeframe_data.items():
             setattr(self, name, data)
 
+    def align(self, base_timeframe_name: str):
+        """
+        Aligns all higher timeframe data to the base timeframe's index.
+        This prevents lookahead bias by ensuring each bar only sees the
+        most recent *completed* higher timeframe data.
+        """
+        base_df = self._data[base_timeframe_name].data
+
+        for name, tf_data in self._data.items():
+            if name == base_timeframe_name:
+                continue
+
+            # Reindex the higher timeframe data to the base index, forward-filling values
+            aligned_df = tf_data.data.reindex(base_df.index, method='ffill').fillna(method='bfill')
+            self._data[name].data = aligned_df
+
+    def set_index(self, index: int):
+        """
+        Sets the current bar index for all Series in all timeframes.
+        This is called by the backtesting engine on each bar.
+        """
+        for tf_data in self._data.values():
+            # This assumes TimeframeData has Series-like properties (open, high, etc.)
+            # which it does. We need to update the underlying Series objects.
+            # The current implementation creates new Series on every property access.
+            # This needs to be optimized. Let's cache them.
+
+            if not hasattr(tf_data, '_series_cache'):
+                tf_data._series_cache = {}
+
+            for series_name in ['open', 'high', 'low', 'close', 'volume']:
+                if series_name not in tf_data._series_cache:
+                    tf_data._series_cache[series_name] = getattr(tf_data, series_name)
+
+                tf_data._series_cache[series_name].set_index(index)
+
     def __getitem__(self, name: str) -> TimeframeData:
         """Get timeframe data by name."""
         return self._data[name]

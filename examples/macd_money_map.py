@@ -184,7 +184,14 @@ class MACDMoneyMap(StrategyBase):
         # Calculate stop loss (tighter of swing low or ATR-based)
         swing_low = self.data.tf_1h.low.lowest(20)
         atr_stop = entry_price - (2 * atr)
-        stop_loss = max(swing_low, atr_stop)  # Use tighter stop
+
+        # Use tighter stop, but ensure it's below entry price
+        stop_loss = max(swing_low, atr_stop)
+
+        # Safety check: stop must be below entry for long positions
+        if stop_loss >= entry_price:
+            # Fall back to ATR-based stop
+            stop_loss = entry_price - (1.5 * atr)
 
         # Calculate risk
         risk = entry_price - stop_loss

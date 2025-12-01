@@ -164,33 +164,34 @@ class Backtest:
         period: Optional[str] = None,
         verbose: bool = True
     ) -> BacktestResult:
-        """
-        Run the backtest.
-        """
         if verbose:
             print(f"Preparing data for {self.symbol}...")
-
-            # This call correctly prepares and returns the final MultiTimeframeData object.
         mtf_data = self._prepare_data(start_date, end_date, period)
 
-        # Initialize strategy with data
+        # --- NEW: ALIGN DATA ---
+        base_tf_name = self._create_timeframe_names([self.base_timeframe])[0]
+        mtf_data.align(base_tf_name)
+        # -----------------------
+
         if verbose:
             print(f"Initializing strategy: {self.strategy.config.name}")
 
         self.strategy._initialize(mtf_data)
 
-        base_tf_data = mtf_data._data[self._create_timeframe_names([self.base_timeframe])[0]]
+        base_tf_data = mtf_data._data[base_tf_name]
         bars = create_bars_iterator(base_tf_data.data)
 
         if verbose:
             print(f"Running backtest on {len(bars)} bars...")
-
-        # Reset tracking
         self.equity_curve_data = []
 
-        # Run bar-by-bar
         for i, bar in enumerate(bars):
-            # Process bar in strategy
+            # --- NEW: SYNCHRONIZE SERIES INDICES ---
+            # The index for Series is reversed (0 is latest), so we map i to it.
+            series_index = len(bars) - 1 - i
+            mtf_data.set_index(series_index)
+            # ---------------------------------------
+
             self.strategy._process_bar(bar, i)
 
             # Record equity
