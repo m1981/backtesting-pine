@@ -170,8 +170,15 @@ def main():
             period = None
             synthetic_type = st.selectbox(
                 "Market Type",
-                options=["Trending (Uptrend)", "Choppy (Sideways)", "Volatile Trending (Best for MACD)"],
-                index=2,
+                options=[
+                    "Bullish Divergence Scenario",
+                    "Bearish Divergence Scenario",
+                    "Trending (Uptrend)",
+                    "Choppy (Sideways)",
+                    "Volatile Trending (Best for MACD)",
+                    "MACD Money Map Specific Scenario"
+                ],
+                index=0,
                 help="Type of synthetic market data to generate"
             )
             n_bars = st.slider(
@@ -300,6 +307,15 @@ def run_backtest_and_display(**params):
                 synthetic_data = generate_trending_data(n_bars=n_bars, seed=seed)
             elif "Choppy" in syn_type:
                 synthetic_data = generate_choppy_data(n_bars=n_bars, seed=seed)
+            elif "MACD Money" in syn_type:
+                from pine.synthetic_data import generate_macd_money_map_scenario
+                synthetic_data = generate_macd_money_map_scenario()
+            elif "Bullish Divergence" in syn_type:
+                from pine.synthetic_data import generate_bullish_divergence_scenario
+                synthetic_data = generate_bullish_divergence_scenario()
+            elif "Bearish Divergence" in syn_type:
+                from pine.synthetic_data import generate_bearish_divergence_scenario
+                synthetic_data = generate_bearish_divergence_scenario()
             else:  # Volatile Trending
                 synthetic_data = generate_volatile_trending_data(n_bars=n_bars, seed=seed)
 
@@ -476,7 +492,7 @@ def display_trade_list(result):
 
 
 def display_price_chart(result, params):
-    """Display price chart with MACD indicators and trade markers."""
+    """Display price chart with MACD indicators, trade markers, and system criteria."""
 
     # Get the strategy and data
     strat = result.strategy
@@ -491,16 +507,31 @@ def display_price_chart(result, params):
         st.warning("Could not access price data.")
         return
 
-    # Create subplots: Price (top), MACD (middle), Equity (bottom)
+    # Get indicators
+    macd_1h = strat.indicators.get('macd_1h')
+    macd_4h = strat.indicators.get('macd_4h')
+    macd_daily = strat.indicators.get('macd_daily')
+    atr = strat.indicators.get('atr')
+
+    # Create subplots: Price, MACD 1H, MACD 4H, Daily Bias
     fig = make_subplots(
-        rows=3, cols=1,
+        rows=4, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.05,
-        row_heights=[0.5, 0.25, 0.25],
-        subplot_titles=(f"{result.symbol} Price & Trades", "MACD (1H)", "Equity Curve")
+        vertical_spacing=0.03,
+        row_heights=[0.45, 0.2, 0.2, 0.15],
+        subplot_titles=(
+            f"📈 {result.symbol} Price & Trades",
+            "🔵 MACD 1H (Entry Trigger - Histogram Flip)",
+            "🟠 MACD 4H (Setup Detection - Crossovers)",
+            "🟢 Daily MACD (Bias Filter - Above/Below Zero)"
+        )
     )
 
-    # 1. Candlestick Chart
+    # ═══════════════════════════════════════════════════════════════
+    # ROW 1: PRICE CHART WITH TRADE MARKERS
+    # ═══════════════════════════════════════════════════════════════
+
+    # Candlestick Chart
     fig.add_trace(go.Candlestick(
         x=df.index,
         open=df['open'],
@@ -512,130 +543,339 @@ def display_price_chart(result, params):
         decreasing_line_color='#EF5350'
     ), row=1, col=1)
 
-    # 2. Add Trade Markers
-    for trade in result.trades:
-        # Entry marker (green triangle up)
+    # Add Trade Markers with Stop Loss and Take Profit levels
+    for i, trade in enumerate(result.trades):
+        # Entry marker - Large yellow diamond
         fig.add_trace(go.Scatter(
             x=[trade.entry_timestamp],
             y=[trade.entry_price],
-            mode='markers',
-            marker=dict(symbol='triangle-up', size=14, color='#00FF00', line=dict(width=1, color='white')),
-            name='Entry',
+            mode='markers+text',
+            marker=dict(symbol='diamond', size=20, color='#FFD700',
+                       line=dict(width=2, color='white')),
+            text=[f'ENTRY #{i+1}'],
+            textposition='top center',
+            textfont=dict(color='#FFD700', size=10),
+            name=f'Entry #{i+1}',
             showlegend=False,
-            hovertext=f"ENTRY<br>Price: ${trade.entry_price:.2f}<br>Qty: {trade.quantity:.2f}"
+            hovertext=f"<b>ENTRY #{i+1}</b><br>Price: ${trade.entry_price:.2f}<br>Qty: {trade.quantity:.2f}"
         ), row=1, col=1)
 
-        # Exit marker (color based on P&L)
-        exit_color = '#00FF00' if trade.pnl > 0 else '#FF0000'
+        # Exit marker - Color based on P&L
+        exit_color = '#00FF00' if trade.pnl > 0 else '#FF4444'
+        exit_symbol = 'star' if trade.pnl > 0 else 'x'
         fig.add_trace(go.Scatter(
             x=[trade.exit_timestamp],
             y=[trade.exit_price],
-            mode='markers',
-            marker=dict(symbol='triangle-down', size=14, color=exit_color, line=dict(width=1, color='white')),
-            name='Exit',
+            mode='markers+text',
+            marker=dict(symbol=exit_symbol, size=18, color=exit_color,
+                       line=dict(width=2, color='white')),
+            text=[f'EXIT ${trade.pnl:+.0f}'],
+            textposition='bottom center',
+            textfont=dict(color=exit_color, size=10),
+            name=f'Exit #{i+1}',
             showlegend=False,
-            hovertext=f"EXIT ({trade.exit_reason.name if trade.exit_reason else 'N/A'})<br>Price: ${trade.exit_price:.2f}<br>P&L: ${trade.pnl:.2f}"
+            hovertext=f"<b>EXIT #{i+1}</b> ({trade.exit_reason.name if trade.exit_reason else 'N/A'})<br>Price: ${trade.exit_price:.2f}<br>P&L: ${trade.pnl:.2f}"
         ), row=1, col=1)
 
-        # Connect entry and exit with a line
-        fig.add_trace(go.Scatter(
-            x=[trade.entry_timestamp, trade.exit_timestamp],
-            y=[trade.entry_price, trade.exit_price],
-            mode='lines',
-            line=dict(color=exit_color, width=2, dash='dot'),
-            showlegend=False,
-            hoverinfo='skip'
-        ), row=1, col=1)
+        # Trade zone rectangle (entry to exit)
+        fig.add_shape(
+            type="rect",
+            x0=trade.entry_timestamp, x1=trade.exit_timestamp,
+            y0=trade.entry_price * 0.99, y1=trade.exit_price,
+            fillcolor='rgba(0,255,0,0.1)' if trade.pnl > 0 else 'rgba(255,0,0,0.1)',
+            line=dict(color=exit_color, width=1, dash='dot'),
+            row=1, col=1
+        )
 
-    # 3. Add MACD indicator
-    if 'macd_1h' in strat.indicators:
-        macd = strat.indicators['macd_1h']
+        # Stop loss line (if available)
+        if hasattr(trade, 'stop_loss') and trade.stop_loss:
+            fig.add_shape(
+                type="line",
+                x0=trade.entry_timestamp, x1=trade.exit_timestamp,
+                y0=trade.stop_loss, y1=trade.stop_loss,
+                line=dict(color='#FF4444', width=2, dash='dash'),
+                row=1, col=1
+            )
+
+        # Take profit line (if available)
+        if hasattr(trade, 'take_profit') and trade.take_profit:
+            fig.add_shape(
+                type="line",
+                x0=trade.entry_timestamp, x1=trade.exit_timestamp,
+                y0=trade.take_profit, y1=trade.take_profit,
+                line=dict(color='#00FF00', width=2, dash='dash'),
+                row=1, col=1
+            )
+
+    # ═══════════════════════════════════════════════════════════════
+    # ROW 2: MACD 1H - Entry Trigger (Histogram Flip)
+    # ═══════════════════════════════════════════════════════════════
+
+    if macd_1h:
+        # Histogram with enhanced colors
+        hist_colors = ['#26A69A' if v >= 0 else '#EF5350' for v in macd_1h._histogram_data]
+        fig.add_trace(go.Bar(
+            x=df.index,
+            y=macd_1h._histogram_data,
+            marker_color=hist_colors,
+            name='1H Histogram',
+            opacity=0.7
+        ), row=2, col=1)
 
         # MACD Line
         fig.add_trace(go.Scatter(
             x=df.index,
-            y=macd._macd_line_data,
-            line=dict(color='#2962FF', width=1.5),
-            name='MACD'
+            y=macd_1h._macd_line_data,
+            line=dict(color='#2962FF', width=2),
+            name='MACD 1H'
         ), row=2, col=1)
 
         # Signal Line
         fig.add_trace(go.Scatter(
             x=df.index,
-            y=macd._signal_line_data,
-            line=dict(color='#FF6D00', width=1.5),
-            name='Signal'
+            y=macd_1h._signal_line_data,
+            line=dict(color='#FF6D00', width=2),
+            name='Signal 1H'
         ), row=2, col=1)
 
-        # Histogram (colored bars)
-        colors = ['#26A69A' if v >= 0 else '#EF5350' for v in macd._histogram_data]
-        fig.add_trace(go.Bar(
-            x=df.index,
-            y=macd._histogram_data,
-            marker_color=colors,
-            name='Histogram',
-            showlegend=False
-        ), row=2, col=1)
+        # Mark histogram flips (entry triggers)
+        hist = macd_1h._histogram_data
+        flip_indices = []
+        flip_values = []
+        for i in range(1, len(hist)):
+            if hist[i-1] < 0 and hist[i] > 0:  # Red to Green flip
+                flip_indices.append(df.index[i])
+                flip_values.append(hist[i])
+
+        if flip_indices:
+            fig.add_trace(go.Scatter(
+                x=flip_indices,
+                y=flip_values,
+                mode='markers',
+                marker=dict(symbol='triangle-up', size=12, color='#00FF00',
+                           line=dict(width=1, color='white')),
+                name='🟢 Histogram Flip (Entry Trigger)',
+                hovertext='Histogram flipped GREEN - Entry trigger!'
+            ), row=2, col=1)
 
         # Zero line
-        fig.add_hline(y=0, line_dash="dash", line_color="gray", row=2, col=1)
+        fig.add_hline(y=0, line_dash="solid", line_color="white", line_width=1, row=2, col=1)
 
-    # 4. Equity Curve
-    fig.add_trace(go.Scatter(
-        x=result.equity_curve.index,
-        y=result.equity_curve['equity'],
-        line=dict(color='#1f77b4', width=2),
-        name='Equity',
-        fill='tozeroy',
-        fillcolor='rgba(31, 119, 180, 0.2)'
-    ), row=3, col=1)
+    # ═══════════════════════════════════════════════════════════════
+    # ROW 3: MACD 4H - Setup Detection (Crossovers far from zero)
+    # ═══════════════════════════════════════════════════════════════
 
-    # Add initial capital line
-    fig.add_hline(
-        y=result.initial_capital,
-        line_dash="dash",
-        line_color="gray",
-        row=3, col=1
-    )
+    if macd_4h:
+        # Get 4H data for proper x-axis
+        try:
+            df_4h = strat.data.tf_4h.data
+            x_4h = df_4h.index
+        except:
+            # Fall back to 1H index (will be misaligned but visible)
+            x_4h = df.index[:len(macd_4h._macd_line_data)]
 
-    # Layout styling
+        # MACD Line
+        fig.add_trace(go.Scatter(
+            x=x_4h,
+            y=macd_4h._macd_line_data[:len(x_4h)],
+            line=dict(color='#FF9800', width=2),
+            name='MACD 4H'
+        ), row=3, col=1)
+
+        # Signal Line
+        fig.add_trace(go.Scatter(
+            x=x_4h,
+            y=macd_4h._signal_line_data[:len(x_4h)],
+            line=dict(color='#9C27B0', width=2),
+            name='Signal 4H'
+        ), row=3, col=1)
+
+        # Mark bullish crossovers
+        macd_line = macd_4h._macd_line_data[:len(x_4h)]
+        signal_line = macd_4h._signal_line_data[:len(x_4h)]
+
+        cross_up_idx = []
+        cross_up_val = []
+        cross_down_idx = []
+        cross_down_val = []
+
+        for i in range(1, len(macd_line)):
+            # Bullish crossover
+            if macd_line[i-1] <= signal_line[i-1] and macd_line[i] > signal_line[i]:
+                cross_up_idx.append(x_4h[i])
+                cross_up_val.append(macd_line[i])
+            # Bearish crossover
+            elif macd_line[i-1] >= signal_line[i-1] and macd_line[i] < signal_line[i]:
+                cross_down_idx.append(x_4h[i])
+                cross_down_val.append(macd_line[i])
+
+        if cross_up_idx:
+            fig.add_trace(go.Scatter(
+                x=cross_up_idx,
+                y=cross_up_val,
+                mode='markers',
+                marker=dict(symbol='triangle-up', size=14, color='#00FF00',
+                           line=dict(width=2, color='white')),
+                name='🔼 4H Bullish Crossover',
+                hovertext='4H MACD crossed ABOVE signal - Setup detected!'
+            ), row=3, col=1)
+
+        if cross_down_idx:
+            fig.add_trace(go.Scatter(
+                x=cross_down_idx,
+                y=cross_down_val,
+                mode='markers',
+                marker=dict(symbol='triangle-down', size=14, color='#FF4444',
+                           line=dict(width=2, color='white')),
+                name='🔽 4H Bearish Crossover',
+                hovertext='4H MACD crossed BELOW signal - Setup invalidated!'
+            ), row=3, col=1)
+
+        # ATR threshold zone (chop zone to avoid)
+        if atr:
+            avg_atr = np.mean(atr._atr_data) * params.get('atr_threshold', 0.5)
+            fig.add_hrect(
+                y0=-avg_atr, y1=avg_atr,
+                fillcolor="rgba(255,255,0,0.1)",
+                line=dict(width=0),
+                annotation_text="⚠️ CHOP ZONE",
+                annotation_position="top left",
+                row=3, col=1
+            )
+
+        # Zero line
+        fig.add_hline(y=0, line_dash="solid", line_color="white", line_width=1, row=3, col=1)
+
+    # ═══════════════════════════════════════════════════════════════
+    # ROW 4: DAILY MACD - Bias Filter (Above/Below Zero)
+    # ═══════════════════════════════════════════════════════════════
+
+    if macd_daily:
+        try:
+            df_daily = strat.data.daily.data
+            x_daily = df_daily.index
+        except:
+            x_daily = df.index[:len(macd_daily._macd_line_data)]
+
+        macd_daily_data = macd_daily._macd_line_data[:len(x_daily)]
+
+        # Color the MACD line based on above/below zero
+        colors_daily = ['#26A69A' if v >= 0 else '#EF5350' for v in macd_daily_data]
+
+        # MACD Line as colored bars for clarity
+        fig.add_trace(go.Bar(
+            x=x_daily,
+            y=macd_daily_data,
+            marker_color=colors_daily,
+            name='Daily MACD',
+            opacity=0.8
+        ), row=4, col=1)
+
+        # Zero line with annotation
+        fig.add_hline(y=0, line_dash="solid", line_color="white", line_width=2, row=4, col=1)
+
+        # Add bias zones
+        fig.add_hrect(
+            y0=0, y1=max(macd_daily_data) * 1.2 if max(macd_daily_data) > 0 else 1,
+            fillcolor="rgba(0,255,0,0.05)",
+            line=dict(width=0),
+            annotation_text="✅ BULLISH BIAS - Longs OK",
+            annotation_position="top left",
+            row=4, col=1
+        )
+        fig.add_hrect(
+            y0=min(macd_daily_data) * 1.2 if min(macd_daily_data) < 0 else -1, y1=0,
+            fillcolor="rgba(255,0,0,0.05)",
+            line=dict(width=0),
+            annotation_text="❌ BEARISH BIAS - No Trading",
+            annotation_position="bottom left",
+            row=4, col=1
+        )
+
+    # ═══════════════════════════════════════════════════════════════
+    # LAYOUT STYLING
+    # ═══════════════════════════════════════════════════════════════
+
     fig.update_layout(
-        title=f"Backtest: {result.strategy_name} | Return: {result.total_return_pct:+.2f}%",
+        title=dict(
+            text=f"<b>MACD Money Map Backtest</b> | {result.symbol} | Return: {result.total_return_pct:+.2f}% | Trades: {len(result.trades)}",
+            font=dict(size=16)
+        ),
         xaxis_rangeslider_visible=False,
-        height=900,
+        height=1100,
         template="plotly_dark",
         hovermode="x unified",
         legend=dict(
             orientation="h",
             yanchor="bottom",
             y=1.02,
-            xanchor="right",
-            x=1
-        )
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10)
+        ),
+        margin=dict(l=60, r=20, t=80, b=40)
     )
 
     # Update y-axis labels
     fig.update_yaxes(title_text="Price ($)", row=1, col=1)
-    fig.update_yaxes(title_text="MACD", row=2, col=1)
-    fig.update_yaxes(title_text="Equity ($)", row=3, col=1)
+    fig.update_yaxes(title_text="MACD 1H", row=2, col=1)
+    fig.update_yaxes(title_text="MACD 4H", row=3, col=1)
+    fig.update_yaxes(title_text="Daily MACD", row=4, col=1)
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Show trade summary below chart
+    # ═══════════════════════════════════════════════════════════════
+    # SYSTEM CRITERIA LEGEND
+    # ═══════════════════════════════════════════════════════════════
+
+    st.markdown("---")
+    st.subheader("📋 System Criteria Legend")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("""
+        **🟢 System 3A: Daily Bias**
+        - ✅ MACD > 0 → Bullish (longs OK)
+        - ❌ MACD < 0 → Bearish (no trading)
+        """)
+
+    with col2:
+        st.markdown("""
+        **🟠 System 1: 4H Setup**
+        - 🔼 Bullish crossover detected
+        - ⚠️ Must be OUTSIDE chop zone
+        - 🔽 Bearish crossover = invalidated
+        """)
+
+    with col3:
+        st.markdown("""
+        **🔵 System 3B: 1H Trigger**
+        - 🟢 Histogram flip (red→green)
+        - Entry only after setup + wait bars
+        """)
+
+    # Trade summary
     if result.trades:
-        st.subheader("📊 Trade Summary")
-        col1, col2, col3, col4 = st.columns(4)
+        st.markdown("---")
+        st.subheader("📊 Trade Analysis")
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.metric("Total Trades", len(result.trades))
         with col2:
             winners = len([t for t in result.trades if t.pnl > 0])
-            st.metric("Winners", winners)
+            st.metric("Winners", winners, f"{100*winners/len(result.trades):.0f}%" if result.trades else "0%")
         with col3:
             losers = len([t for t in result.trades if t.pnl <= 0])
             st.metric("Losers", losers)
         with col4:
-            avg_bars = sum(getattr(t, 'bars_held', 0) for t in result.trades) / len(result.trades) if result.trades else 0
-            st.metric("Avg Bars Held", f"{avg_bars:.1f}")
+            total_pnl = sum(t.pnl for t in result.trades)
+            st.metric("Total P&L", f"${total_pnl:,.2f}")
+        with col5:
+            avg_pnl = total_pnl / len(result.trades) if result.trades else 0
+            st.metric("Avg P&L/Trade", f"${avg_pnl:,.2f}")
+    else:
+        st.warning("⚠️ No trades were executed. Check the system criteria above to understand why.")
 
 
 if __name__ == "__main__":

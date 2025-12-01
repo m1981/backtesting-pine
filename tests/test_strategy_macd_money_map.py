@@ -6,7 +6,7 @@ import pandas as pd
 
 from pine import Backtest, State, ExitReason
 from examples.macd_money_map import MACDMoneyMap
-
+from pine.synthetic_data import generate_macd_money_map_scenario 
 
 # Helper function to generate synthetic data
 def generate_synthetic_data(price_points, start_date='2023-01-01', freq='1H'):
@@ -26,19 +26,7 @@ def generate_synthetic_data(price_points, start_date='2023-01-01', freq='1H'):
 
 @pytest.fixture
 def ideal_trade_scenario_data():
-    """
-    Generates data designed to trigger one successful MACD Money Map trade.
-    - Bars 0-50: Establishes a strong daily uptrend (Daily MACD > 0).
-    - Bars 50-70: 4H crossover occurs far from zero.
-    - Bars 73-75: 1H histogram flips after 'wait_bars' period.
-    - Bars 75+: Price rises to hit the take profit.
-    """
-    # This price action is crafted to manipulate the indicators as needed
-    prices = ([100 + i * 0.1 for i in range(50)] +  # Initial uptrend for Daily bias
-              [105, 104, 106, 105, 107, 106] +  # Cause 4H crossover
-              [106.1, 106.2, 106.0] +  # 'wait_bars' period + histo flip
-              [107, 108, 109, 110, 115])  # Rise to take profit
-    return generate_synthetic_data(prices)
+    return generate_macd_money_map_scenario()
 
 
 @pytest.fixture
