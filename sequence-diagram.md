@@ -1,3 +1,4 @@
+```mermaid
 sequenceDiagram
     autonumber
     participant BT as Backtesting Engine
@@ -102,3 +103,4 @@ sequenceDiagram
         Note over PM: Bar 102: BUY @ 150.00, SL=147.00, TP=156.00
         Note over PM: Bar 115: Price hits 156.00 → EXIT @ TP
     end
+```

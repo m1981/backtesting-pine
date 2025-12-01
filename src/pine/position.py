@@ -527,18 +527,10 @@ class PositionManager:
         Get performance summary.
 
         Returns:
-            Dictionary with performance metrics
+            Dictionary with performance metrics, always with a consistent structure.
         """
-        if self.total_trades == 0:
-            return {
-                'total_trades': 0,
-                'win_rate': 0.0,
-                'total_pnl': 0.0,
-                'total_return': 0.0
-            }
-
         total_pnl = sum(trade.pnl for trade in self.closed_trades)
-        win_rate = self.winning_trades / self.total_trades * 100
+        win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0.0
 
         return {
             'total_trades': self.total_trades,
@@ -546,7 +538,7 @@ class PositionManager:
             'losing_trades': self.losing_trades,
             'win_rate': win_rate,
             'total_pnl': total_pnl,
-            'total_return': (self.capital - self.initial_capital) / self.initial_capital * 100,
+            'total_return': (self.equity - self.initial_capital) / self.initial_capital * 100 if self.initial_capital != 0 else 0.0,
             'final_capital': self.capital,
             'current_equity': self.equity
         }

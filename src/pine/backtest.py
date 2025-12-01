@@ -11,7 +11,7 @@ import pandas as pd
 from dataclasses import dataclass
 
 from .strategy import StrategyBase
-from .data import DataLoader, MultiTimeframeData, create_bars_iterator
+from .data import DataLoader, MultiTimeframeData, create_bars_iterator, TimeframeData
 from .core.types import Timeframe
 from .position import Trade
 
@@ -41,6 +41,7 @@ class BacktestResult:
 
     # Equity curve
     equity_curve: pd.DataFrame
+    strategy: Optional[StrategyBase] = None
 
     def __repr__(self) -> str:
         return (
@@ -53,6 +54,12 @@ class BacktestResult:
             f"  Final Capital: ${self.final_capital:,.2f}\n"
             f")"
         )
+
+    def plot(self, filename: str = "backtest_result.html", show: bool = True):
+        """Visualize the backtest results."""
+        from .plotting import Plotter
+        plotter = Plotter(self)
+        plotter.plot(filename=filename, show=show)
 
     def to_dict(self) -> Dict:
         """Convert result to dictionary."""
@@ -90,73 +97,65 @@ class BacktestResult:
 
         if self.trades:
             print("\nRecent Trades:")
-            for trade in self.trades[-5:]:  # Show last 5 trades
+            for trade in self.trades[-5:]:
                 print(f"  {trade}")
 
 
 class Backtest:
-    """
-    Backtesting engine.
-
-    Runs a strategy on historical data and produces performance results.
-
-    Example:
-        # Create strategy
-        strategy = MACDMoneyMap()
-
-        # Run backtest
-        bt = Backtest(
-            strategy=strategy,
-            symbol='AAPL',
-            timeframes=['1h', '4h', '1d']
-        )
-
-        result = bt.run(period='2y')
-        result.print_summary()
-    """
+    """Backtesting engine."""
 
     def __init__(
         self,
         strategy: StrategyBase,
-        symbol: str,
         timeframes: List[Union[str, Timeframe]],
+        symbol: Optional[str] = None,
+        data: Optional[pd.DataFrame] = None,
         base_timeframe: Optional[Union[str, Timeframe]] = None
     ):
-        """
-        Initialize backtesting engine.
+        if data is None and symbol is None:
+            raise ValueError("Either `symbol` or `data` must be provided.")
 
-        Args:
-            strategy: Strategy instance to test
-            symbol: Trading symbol (e.g., 'AAPL', 'SPY')
-            timeframes: List of timeframes to load (e.g., ['1h', '4h', '1d'])
-            base_timeframe: Base timeframe for bar-by-bar execution (default: first in list)
-        """
         self.strategy = strategy
-        self.symbol = symbol
-
-        # Convert timeframe strings to Timeframe enums
-        self.timeframes = []
-        for tf in timeframes:
-            if isinstance(tf, str):
-                self.timeframes.append(Timeframe.from_string(tf))
-            else:
-                self.timeframes.append(tf)
-
-        # Set base timeframe (execution timeframe)
+        self.symbol = symbol or "SYNTHETIC"
+        self.data = data
+        self.timeframes = [Timeframe.from_string(tf) if isinstance(tf, str) else tf for tf in timeframes]
         if base_timeframe:
-            if isinstance(base_timeframe, str):
-                self.base_timeframe = Timeframe.from_string(base_timeframe)
-            else:
-                self.base_timeframe = base_timeframe
+            self.base_timeframe = Timeframe.from_string(base_timeframe) if isinstance(base_timeframe, str) else base_timeframe
         else:
-            # Use first timeframe as base
             self.base_timeframe = self.timeframes[0]
+        self.equity_curve_data = []
 
-        # Data loader
-        self.data_loader = DataLoader(symbol=symbol, base_timeframe=self.base_timeframe)
+    def _prepare_data(self, start_date=None, end_date=None, period=None) -> MultiTimeframeData:
+        """Loads or uses provided data and prepares it for the backtest."""
+        if self.data is not None:
+            # Use pre-loaded data
+            base_df = self.data
+        else:
+            # Fetch data using DataLoader
+            loader = DataLoader(symbol=self.symbol, base_timeframe=self.base_timeframe)
+            base_df = loader.fetch(start_date=start_date, end_date=end_date, period=period)
 
-        # Tracking
-        self.equity_curve_data: List[Dict] = []
+        # Create the dictionary of TimeframeData objects by resampling the base_df
+        mtf_data_dict = {}
+        resampling_rules = {
+            'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
+        }
+
+        for tf in self.timeframes:
+            if tf == self.base_timeframe:
+                mtf_data_dict[tf] = TimeframeData(tf, base_df)
+            else:
+                resampled_df = base_df.resample(tf.to_pandas_freq()).agg(resampling_rules).dropna()
+                mtf_data_dict[tf] = TimeframeData(tf, resampled_df)
+
+        # Create named timeframe dictionary for strategy access
+        timeframe_names = self._create_timeframe_names(self.timeframes)
+        named_data = {
+            name: mtf_data_dict[tf]
+            for name, tf in zip(timeframe_names, self.timeframes)
+        }
+
+        return MultiTimeframeData(named_data)
 
     def run(
         self,
@@ -167,37 +166,12 @@ class Backtest:
     ) -> BacktestResult:
         """
         Run the backtest.
-
-        Args:
-            start_date: Start date for backtest
-            end_date: End date for backtest
-            period: Period string (e.g., '1y', '2y') instead of dates
-            verbose: Print progress messages
-
-        Returns:
-            BacktestResult with performance metrics and trade history
         """
         if verbose:
-            print(f"Loading data for {self.symbol}...")
+            print(f"Preparing data for {self.symbol}...")
 
-        # Load multi-timeframe data
-        mtf_data_dict = self.data_loader.load_multiple_timeframes(
-            timeframes=self.timeframes,
-            start_date=start_date,
-            end_date=end_date,
-            period=period
-        )
-
-        # Create named timeframe dictionary for strategy access
-        # Map timeframes to friendly names
-        timeframe_names = self._create_timeframe_names(self.timeframes)
-        named_data = {
-            name: mtf_data_dict[tf]
-            for name, tf in zip(timeframe_names, self.timeframes)
-        }
-
-        # Create MultiTimeframeData object
-        mtf_data = MultiTimeframeData(named_data)
+            # This call correctly prepares and returns the final MultiTimeframeData object.
+        mtf_data = self._prepare_data(start_date, end_date, period)
 
         # Initialize strategy with data
         if verbose:
@@ -205,8 +179,7 @@ class Backtest:
 
         self.strategy._initialize(mtf_data)
 
-        # Get bars for base timeframe (execution timeframe)
-        base_tf_data = mtf_data_dict[self.base_timeframe]
+        base_tf_data = mtf_data._data[self._create_timeframe_names([self.base_timeframe])[0]]
         bars = create_bars_iterator(base_tf_data.data)
 
         if verbose:
@@ -230,71 +203,33 @@ class Backtest:
 
             # Progress indicator
             if verbose and (i + 1) % 100 == 0:
-                progress = (i + 1) / len(bars) * 100
-                print(f"Progress: {progress:.1f}% ({i + 1}/{len(bars)} bars)", end='\r')
+                print(f"Progress: {(i + 1) / len(bars) * 100:.1f}% ({i + 1}/{len(bars)} bars)", end='\r')
 
         if verbose:
-            print()  # New line after progress
-            print("Backtest complete!")
-
-        # Create result
-        result = self._create_result(bars)
-
-        return result
+            print("\nBacktest complete!")
+        return self._create_result(bars)
 
     def _create_timeframe_names(self, timeframes: List[Timeframe]) -> List[str]:
-        """
-        Create friendly names for timeframes.
-
-        Args:
-            timeframes: List of Timeframe enums
-
-        Returns:
-            List of friendly names
-        """
         names = []
         for tf in timeframes:
-            if tf == Timeframe.HOUR_1:
-                names.append('tf_1h')
-            elif tf == Timeframe.HOUR_4:
-                names.append('tf_4h')
-            elif tf == Timeframe.DAILY:
-                names.append('daily')
-            elif tf == Timeframe.MINUTE_15:
-                names.append('tf_15m')
-            elif tf == Timeframe.MINUTE_30:
-                names.append('tf_30m')
-            elif tf == Timeframe.WEEKLY:
-                names.append('weekly')
-            else:
-                # Generic name
-                names.append(f'tf_{tf.name.lower()}')
-
+            if tf == Timeframe.HOUR_1: names.append('tf_1h')
+            elif tf == Timeframe.HOUR_4: names.append('tf_4h')
+            elif tf == Timeframe.DAILY: names.append('daily')
+            elif tf == Timeframe.MINUTE_15: names.append('tf_15m')
+            elif tf == Timeframe.MINUTE_30: names.append('tf_30m')
+            elif tf == Timeframe.WEEKLY: names.append('weekly')
+            else: names.append(f'tf_{tf.name.lower()}')
         return names
 
     def _create_result(self, bars: List) -> BacktestResult:
-        """
-        Create BacktestResult from strategy state.
-
-        Args:
-            bars: List of bars processed
-
-        Returns:
-            BacktestResult object
-        """
         summary = self.strategy.get_summary()
-
-        # Create equity curve DataFrame
-        equity_df = pd.DataFrame(self.equity_curve_data)
-        equity_df.set_index('timestamp', inplace=True)
-
-        # Calculate metrics
+        equity_df = pd.DataFrame(self.equity_curve_data).set_index('timestamp')
         initial_capital = self.strategy.config.initial_capital
         final_capital = self.strategy.capital
         total_return = final_capital - initial_capital
-        total_return_pct = (total_return / initial_capital) * 100
+        total_return_pct = (total_return / initial_capital) * 100 if initial_capital != 0 else 0
 
-        result = BacktestResult(
+        return BacktestResult(
             strategy_name=self.strategy.config.name,
             symbol=self.symbol,
             start_date=bars[0].timestamp.to_pydatetime(),
@@ -306,40 +241,11 @@ class Backtest:
             total_trades=summary['total_trades'],
             winning_trades=summary['winning_trades'],
             losing_trades=summary['losing_trades'],
-            win_rate=summary['win_rate'],
+            win_rate=summary.get('win_rate', 0.0),
             trades=self.strategy.trades,
-            equity_curve=equity_df
+            equity_curve=equity_df,
+            strategy=self.strategy
         )
 
-        return result
-
-    def optimize(
-        self,
-        param_grid: Dict[str, List],
-        metric: str = 'total_return_pct',
-        **run_kwargs
-    ) -> pd.DataFrame:
-        """
-        Run parameter optimization.
-
-        Args:
-            param_grid: Dictionary of parameter names to lists of values
-            metric: Metric to optimize (default: 'total_return_pct')
-            **run_kwargs: Arguments passed to run()
-
-        Returns:
-            DataFrame with results for each parameter combination
-
-        Example:
-            results = bt.optimize(
-                param_grid={
-                    'fast_ema': [8, 12, 16],
-                    'slow_ema': [21, 26, 30]
-                },
-                period='2y'
-            )
-        """
-        # TODO: Implement grid search optimization
-        # This would iterate through parameter combinations,
-        # run backtests, and return results sorted by metric
+    def optimize(self, param_grid: Dict[str, List], metric: str = 'total_return_pct', **run_kwargs) -> pd.DataFrame:
         raise NotImplementedError("Optimization not yet implemented")

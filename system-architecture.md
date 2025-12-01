@@ -1,3 +1,4 @@
+```mermaid
 flowchart TB
     subgraph DATA["📊 DATA LAYER"]
         FETCH[/"Fetch Hourly Data<br/>(yfinance - 730 days max)"/]
@@ -67,3 +68,4 @@ flowchart TB
     style ENTRY fill:#28a745,color:#fff
     style REJECT1 fill:#dc3545,color:#fff
     style SKIP fill:#6c757d,color:#fff
+```
