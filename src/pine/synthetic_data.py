@@ -80,41 +80,35 @@ def generate_realistic_ohlc(
 
 def generate_bullish_divergence_scenario(seed: Optional[int] = 42) -> pd.DataFrame:
     """
-    Recreates a Bullish Divergence pattern within a larger Uptrend.
-
-    Why this structure?
-    To satisfy the 'Daily Bias > 0' rule, we cannot have a full bearish trend reversal.
-    Instead, we simulate a deep multi-leg pullback within a macro uptrend.
+    Recreates the Bullish Divergence pattern (The "W" bottom):
+    - Price makes a Lower Low (Panic selling).
+    - MACD makes a Higher Low (Momentum slowing).
     """
-    # 1. Massive Uptrend (Build Daily Bias Buffer)
-    # We need a long run-up so the 26-day EMA is far below price.
-    # This keeps Daily MACD > 0 during the subsequent drop.
-    phase0_len = 600
-    phase0 = [100 + (i * 0.1) for i in range(phase0_len)]  # Ends at 160
+    # 1. The Crash (Strong Downtrend)
+    # Fast drop creates a deep MACD Low
+    phase1 = np.linspace(100, 90, 40)
 
-    # 2. Leg 1: Sharp Drop (The First Low)
-    # Fast drop to create deep momentum
-    start_p = phase0[-1]
-    phase1 = np.linspace(start_p, start_p - 8, 20)
+    # 2. The Bounce (Relief Rally)
+    # MACD resets towards zero
+    phase2 = np.linspace(90, 94, 20)
 
-    # 3. Leg 2: The Bounce
-    phase2 = np.linspace(phase1[-1], phase1[-1] + 3, 15)
+    # 3. The Divergence Leg (Grinding Lower)
+    # Price drops to a new low (88), but SLOWER than phase 1.
+    # Slower velocity = MACD stays higher than the first low.
+    phase3 = np.linspace(94, 88, 50)
 
-    # 4. Leg 3: The Divergence (Lower Low, Slower Speed)
-    # Price goes lower than Leg 1, but takes longer (slower velocity).
-    # This creates the MACD Higher Low.
-    phase3 = np.linspace(phase2[-1], phase1[-1] - 2, 45)
+    # 4. The Reversal (Rally)
+    # Price explodes up
+    phase4 = np.linspace(88, 105, 40)
 
-    # 5. The Reversal (Trigger)
-    phase4 = np.linspace(phase3[-1], start_p + 5, 40)
+    all_closes = np.concatenate([phase1, phase2, phase3, phase4])
 
-    all_closes = np.concatenate([phase0, phase1, phase2, phase3, phase4])
-
-    # Add slight noise
+    # Add slight noise to make lines organic
     np.random.seed(seed)
     noise = np.random.normal(0, 0.05, len(all_closes))
     all_closes += noise
 
+    # Use realistic OHLC generator
     return generate_realistic_ohlc(all_closes, volatility_factor=0.25, seed=seed)
 
 # ═══════════════════════════════════════════════════════════════

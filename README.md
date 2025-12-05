@@ -1,5 +1,8 @@
 # backtesting-pine
 
+### Chat 
+https://aistudio.google.com/prompts/1OwUbZU1fhhhsogJ_qyEo_hurzh51pjj9
+
 A Python backtesting framework inspired by Pine Script for building multi-timeframe trading strategies with an intuitive, declarative API.
 
 ## Features
